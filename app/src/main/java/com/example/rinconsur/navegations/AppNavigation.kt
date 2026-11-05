@@ -270,7 +270,21 @@ private fun AppNavHost(
             }
         }
         composable(Routes.HOME) {
-            HomeScreen(nombre = nombreUsuario, tipo = tipoUsuario)
+            HomeScreen(
+                nombre = nombreUsuario,
+                tipo = tipoUsuario,
+                esOperador = esOperador,
+                esSupervisor = esSupervisor,
+                turnoViewModel = turnoViewModel,
+                registroViewModel = registroViewModel,
+                dashboardViewModel = dashboardViewModel,
+                onIrTurno = { onNavigateTopLevel(Routes.TURNO) },
+                onIrSalidas = { onNavigateTopLevel(Routes.REGISTROS) },
+                onIrMetricas = { onNavigateTopLevel(Routes.DASHBOARD) },
+                onIrUsuarios = { onNavigateTopLevel(Routes.USUARIOS) },
+                onIrTipos = { onNavigateTopLevel(Routes.TIPOS) }
+            )
+
         }
 
         // Pantallas del operador
