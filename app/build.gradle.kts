@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.ksp) // NUEVO
 }
 
 android {
@@ -46,11 +45,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-
-    // Room
-    implementation(libs.androidx.room.runtime) // NUEVO
-    implementation(libs.androidx.room.ktx)     // NUEVO
-    ksp(libs.androidx.room.compiler)           // NUEVO
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

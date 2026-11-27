@@ -35,13 +35,10 @@ data class ErrorDto(val mensaje: String?, val errores: Map<String, String>?)
 
 // ---------- Conversión a los modelos que usan las pantallas ----------
 
-// La clave ya no viaja al teléfono: el backend la valida
 fun UsuarioDto.toModel() = Usuario(
     id = id,
     nombre = nombre,
     email = email,
-    claveHash = "",
-    sal = "",
     tipoUsuarioId = tipoUsuarioId,
     activo = activo
 )
