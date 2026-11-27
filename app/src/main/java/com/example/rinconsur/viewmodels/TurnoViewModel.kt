@@ -1,22 +1,16 @@
 package com.example.rinconsur.viewmodels
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.rinconsur.repository.data.AppDatabase
+import com.example.rinconsur.repository.EntradaRepository
+import com.example.rinconsur.repository.TurnoRepository
+import com.example.rinconsur.repository.model.Entrada
 import com.example.rinconsur.repository.model.Turno
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class TurnoFormState(
     val accesoId: Int? = null,
@@ -25,27 +19,62 @@ data class TurnoFormState(
     val fotoError: String? = null
 )
 
-class TurnoViewModel(application: Application) : AndroidViewModel(application) {
+class TurnoViewModel(
+    private val turnoRepo: TurnoRepository = TurnoRepository(),
+    private val entradaRepo: EntradaRepository = EntradaRepository()
+) : ViewModel() {
 
-    private val dao = AppDatabase.getDatabase(application).turnoDao()
+    // Usuario que tiene la sesión iniciada (lo informa AppNavigation tras el login)
+    private var usuarioId: Long? = null
 
-    // Usuario que tiene la sesión iniciada (lo informa la pantalla tras el login)
-    private val usuarioId = MutableStateFlow<Long?>(null)
+    // Turno en curso del operador, o null si no tiene (viene de ms-turnos)
+    private val _turnoActivo = MutableStateFlow<Turno?>(null)
+    val turnoActivo: StateFlow<Turno?> = _turnoActivo.asStateFlow()
 
-    // Turno activo del usuario (fin = null), o null si no tiene
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val turnoActivo: StateFlow<Turno?> = usuarioId
-        .flatMapLatest { id -> if (id == null) flowOf(null) else dao.turnoActivo(id) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    // Entradas disponibles para iniciar turno (vienen de ms-entradas)
+    private val _entradas = MutableStateFlow<List<Entrada>>(emptyList())
+    val entradas: StateFlow<List<Entrada>> = _entradas.asStateFlow()
 
-    // Historial de todos los turnos (lo ve el supervisor)
-    val historial: StateFlow<List<Turno>> = dao.historial()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // true mientras se inicia o finaliza un turno
+    private val _cargando = MutableStateFlow(false)
+    val cargando: StateFlow<Boolean> = _cargando.asStateFlow()
 
     private val _form = MutableStateFlow(TurnoFormState())
     val form: StateFlow<TurnoFormState> = _form.asStateFlow()
 
-    fun setUsuario(id: Long?) { usuarioId.value = id }
+    // Mensajes de error del backend o de la red
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    fun clearMessage() { _message.value = null }
+
+    fun setUsuario(id: Long?) {
+        usuarioId = id
+        _turnoActivo.value = null
+        if (id != null) {
+            cargarTurnoActivo()
+            cargarEntradas()
+        }
+    }
+
+    // READ: GET /api/turnos/activo?usuarioId=...
+    fun cargarTurnoActivo() {
+        val id = usuarioId ?: return
+        viewModelScope.launch {
+            turnoRepo.turnoActivo(id)
+                .onSuccess { _turnoActivo.value = it }
+                .onFailure { _message.value = it.message }
+        }
+    }
+
+    // READ: GET /api/entradas?soloActivas=true
+    fun cargarEntradas() {
+        viewModelScope.launch {
+            entradaRepo.listar(soloActivas = true)
+                .onSuccess { _entradas.value = it }
+                .onFailure { _message.value = it.message }
+        }
+    }
 
     fun nuevo() { _form.value = TurnoFormState() }
 
@@ -55,42 +84,45 @@ class TurnoViewModel(application: Application) : AndroidViewModel(application) {
     fun onFotoChange(ruta: String?) =
         _form.update { it.copy(fotoRuta = ruta, fotoError = null) }
 
-    /** CREATE: inicia el turno. Exige acceso y foto. */
+    /** CREATE: POST /api/turnos. Exige entrada y foto. */
     fun iniciar(onSuccess: () -> Unit) {
         val f = _form.value
-        val accesoError = Validaciones.validarAcceso(f.accesoId)
+        val validos = _entradas.value.map { it.id.toInt() }
+        val accesoError = Validaciones.validarAcceso(f.accesoId, validos)
         val fotoError = Validaciones.validarFoto(f.fotoRuta)
         if (accesoError != null || fotoError != null) {
             _form.update { it.copy(accesoError = accesoError, fotoError = fotoError) }
             return
         }
 
-        val idUsuario = usuarioId.value ?: return
-        if (turnoActivo.value != null) return // ya tiene un turno abierto
+        val idUsuario = usuarioId ?: return
+        if (_turnoActivo.value != null || _cargando.value) return
 
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                dao.insertar(
-                    Turno(
-                        usuarioId = idUsuario,
-                        accesoId = f.accesoId!!,
-                        inicio = System.currentTimeMillis(),
-                        fotoRuta = f.fotoRuta!!
-                    )
-                )
-            }
-            _form.value = TurnoFormState()
-            onSuccess()
+            _cargando.value = true
+            turnoRepo.iniciar(idUsuario, f.accesoId!!.toLong(), f.fotoRuta!!)
+                .onSuccess { turno ->
+                    _turnoActivo.value = turno
+                    _form.value = TurnoFormState()
+                    onSuccess()
+                }
+                .onFailure { _message.value = it.message }
+            _cargando.value = false
         }
     }
 
-    /** UPDATE: cierra el turno guardando la hora de fin. */
+    /** UPDATE: PUT /api/turnos/{id}/finalizar */
     fun finalizar(turno: Turno, onSuccess: () -> Unit = {}) {
+        if (_cargando.value) return
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                dao.finalizar(turno.id, System.currentTimeMillis())
-            }
-            onSuccess()
+            _cargando.value = true
+            turnoRepo.finalizar(turno.id)
+                .onSuccess {
+                    _turnoActivo.value = null
+                    onSuccess()
+                }
+                .onFailure { _message.value = it.message }
+            _cargando.value = false
         }
     }
 }

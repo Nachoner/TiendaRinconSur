@@ -2,6 +2,7 @@ package com.example.rinconsur.repository.remote.dto
 
 import com.example.rinconsur.repository.model.TipoUsuario
 import com.example.rinconsur.repository.model.Usuario
+import com.example.rinconsur.repository.model.UsuarioConTipo
 
 // ---------- Lo que se envía ----------
 
@@ -46,3 +47,9 @@ fun UsuarioDto.toModel() = Usuario(
 )
 
 fun TipoUsuarioDto.toModel() = TipoUsuario(id = id, nombre = nombre)
+
+// La lista de usuarios de la app muestra cada usuario junto con su tipo
+fun UsuarioDto.toUsuarioConTipo() = UsuarioConTipo(
+    usuario = toModel(),
+    tipo = TipoUsuario(id = tipoUsuarioId, nombre = tipoUsuarioNombre)
+)
