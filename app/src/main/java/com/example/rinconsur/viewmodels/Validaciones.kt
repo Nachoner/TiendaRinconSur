@@ -13,6 +13,16 @@ object Validaciones {
 
     val ACCESOS = 1..4
 
+    // Nombre que se muestra para cada acceso. En la BD se guarda solo el número (1 a 4).
+    private val NOMBRES_ACCESO = mapOf(
+        1 to "Entrada 2do piso",
+        2 to "Entrada Dentro Mall",
+        3 to "Entrada Sodimac",
+        4 to "Entrada Afuera Mall"
+    )
+
+    fun nombreAcceso(accesoId: Int): String = NOMBRES_ACCESO[accesoId] ?: "Acceso $accesoId"
+
     val RANGOS_ETARIOS = listOf(
         "Menor de 18", "18-25", "26-35", "36-50", "51-65", "66 o más"
     )
@@ -59,8 +69,8 @@ object Validaciones {
     }
 
     fun validarAcceso(acceso: Int?): String? = when {
-        acceso == null -> "Selecciona un acceso"
-        acceso !in ACCESOS -> "Acceso no válido"
+        acceso == null -> "Selecciona una entrada"
+        acceso !in ACCESOS -> "Entrada no válida"
         else -> null
     }
 

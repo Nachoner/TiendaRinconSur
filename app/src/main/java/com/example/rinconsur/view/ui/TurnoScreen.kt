@@ -37,6 +37,7 @@ import com.example.rinconsur.view.utils.vibrarConfirmacion
 import com.example.rinconsur.view.utils.vibrarError
 import com.example.rinconsur.viewmodels.TurnoFormState
 import com.example.rinconsur.viewmodels.TurnoViewModel
+import com.example.rinconsur.viewmodels.Validaciones
 import java.io.File
 
 @Composable
@@ -127,21 +128,22 @@ private fun FormularioInicio(
     ) {
         Text("Iniciar turno", style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = "Elige el acceso donde te ubicarás y toma una foto de la puerta.",
+            text = "Elige la entrada donde te ubicarás y toma una foto de la puerta.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // Acceso
+        // Entrada
         Spacer(Modifier.height(4.dp))
-        Text("Acceso", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChipAcceso(1, form.accesoId == 1, { viewModel.onAccesoChange(1) }, Modifier.weight(1f))
-            ChipAcceso(2, form.accesoId == 2, { viewModel.onAccesoChange(2) }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChipAcceso(3, form.accesoId == 3, { viewModel.onAccesoChange(3) }, Modifier.weight(1f))
-            ChipAcceso(4, form.accesoId == 4, { viewModel.onAccesoChange(4) }, Modifier.weight(1f))
+        Text("Entrada", style = MaterialTheme.typography.titleMedium)
+        // Un chip por fila: los nombres son largos y no caben dos por fila
+        Validaciones.ACCESOS.forEach { id ->
+            ChipAcceso(
+                numero = id,
+                seleccionado = form.accesoId == id,
+                onClick = { viewModel.onAccesoChange(id) },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
         MensajeError(form.accesoError)
 
@@ -242,7 +244,7 @@ private fun ChipAcceso(
     FilterChip(
         selected = seleccionado,
         onClick = onClick,
-        label = { Text("Acceso $numero", modifier = Modifier.padding(vertical = 8.dp)) },
+        label = { Text(Validaciones.nombreAcceso(numero), modifier = Modifier.padding(vertical = 8.dp)) },
         leadingIcon = {
             Icon(
                 imageVector = if (seleccionado) Icons.Default.Check else Icons.Default.MeetingRoom,
@@ -284,7 +286,7 @@ private fun TurnoEnCurso(turno: Turno, viewModel: TurnoViewModel) {
                     Spacer(Modifier.width(8.dp))
                     Text("Turno en curso", style = MaterialTheme.typography.titleLarge)
                 }
-                Text("Acceso ${turno.accesoId}", style = MaterialTheme.typography.titleMedium)
+                Text(Validaciones.nombreAcceso(turno.accesoId), style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = "Inicio: ${formatearFechaHora(turno.inicio)}",
                     style = MaterialTheme.typography.bodyMedium

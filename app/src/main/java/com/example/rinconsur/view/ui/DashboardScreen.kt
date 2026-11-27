@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.rinconsur.viewmodels.AccesoMetricas
 import com.example.rinconsur.viewmodels.BarraDato
 import com.example.rinconsur.viewmodels.DashboardViewModel
+import com.example.rinconsur.viewmodels.Validaciones
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -54,7 +55,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
     val totalPersonas = accesos.sumOf { it.personas }
     val porcentajeConBolsa =
         if (totalGrupos == 0) 0 else (gruposConBolsa * 100f / totalGrupos).roundToInt()
-    // El acceso con más salidas sin bolsa en proporción
+    // La entrada con más salidas sin bolsa en proporción
     val accesoMasTransito = accesos
         .filter { it.grupos > 0 }
         .maxByOrNull { 1f - it.fraccionConBolsa }
@@ -168,8 +169,8 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
                         }
                     }
 
-                    // Por acceso
-                    Titulo(icono = Icons.Default.MeetingRoom, texto = "Por acceso")
+                    // Por entrada
+                    Titulo(icono = Icons.Default.MeetingRoom, texto = "Por entrada")
                     accesos.forEach { acceso ->
                         TarjetaAcceso(
                             metricas = acceso,
@@ -285,7 +286,7 @@ private fun TarjetaAcceso(metricas: AccesoMetricas, masTransito: Boolean) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Acceso ${metricas.accesoId}",
+                    text = Validaciones.nombreAcceso(metricas.accesoId),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
