@@ -1,19 +1,14 @@
 package com.example.rinconsur.viewmodels
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.rinconsur.repository.data.AppDatabase
-import com.example.rinconsur.repository.data.Seguridad
+import com.example.rinconsur.repository.UsuarioRepository
 import com.example.rinconsur.repository.model.Usuario
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class LoginUiState(
     val email: String = "",
@@ -25,9 +20,13 @@ data class LoginUiState(
     val usuarioLogueado: Usuario? = null
 )
 
-class LoginViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val usuarioDao = AppDatabase.getDatabase(application).usuarioDao()
+/**
+ * El repositorio entra por el constructor: la app usa el real y
+ * las pruebas unitarias pueden pasar uno falso.
+ */
+class LoginViewModel(
+    private val repo: UsuarioRepository = UsuarioRepository()
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -41,7 +40,7 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     fun login() {
         val state = _uiState.value
 
-        // Validación del formulario: si hay errores, no se consulta la base de datos
+        // Validación del formulario: si hay errores, no se llama al backend
         val emailError = Validaciones.validarEmail(state.email)
         val claveError = if (state.clave.isBlank()) "Ingresa la contraseña" else null
         if (emailError != null || claveError != null) {
@@ -51,23 +50,17 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-            delay(600) // pequeña pausa para mostrar el indicador de carga
 
-            val encontrado = withContext(Dispatchers.IO) {
-                usuarioDao.buscarPorEmail(state.email.trim().lowercase())
-            }?.usuario
-
-            // Mismo mensaje si el email no existe, la clave es mala o la cuenta está desactivada
-            val ok = encontrado != null && encontrado.activo &&
-                    withContext(Dispatchers.Default) {
-                        val intento = Seguridad.hash(state.clave, encontrado.sal)
-                        Seguridad.iguales(intento, encontrado.claveHash)
+            // POST /api/auth/login en ms-usuarios
+            repo.login(state.email, state.clave)
+                .onSuccess { usuario ->
+                    _uiState.update { it.copy(isLoading = false, usuarioLogueado = usuario, clave = "") }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(isLoading = false, error = e.message ?: "No se pudo iniciar sesión")
                     }
-
-            _uiState.update {
-                if (ok) it.copy(isLoading = false, usuarioLogueado = encontrado, clave = "")
-                else it.copy(isLoading = false, error = "Credenciales inválidas")
-            }
+                }
         }
     }
 
@@ -75,4 +68,3 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = LoginUiState()
     }
 }
-

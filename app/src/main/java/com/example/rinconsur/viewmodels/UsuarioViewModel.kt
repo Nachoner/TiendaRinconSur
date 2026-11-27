@@ -1,23 +1,21 @@
 package com.example.rinconsur.viewmodels
 
-import android.app.Application
-import android.database.sqlite.SQLiteConstraintException
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.rinconsur.repository.data.AppDatabase
-import com.example.rinconsur.repository.data.Seguridad
+import com.example.rinconsur.repository.UsuarioRepository
 import com.example.rinconsur.repository.model.TiposBase
 import com.example.rinconsur.repository.model.Usuario
 import com.example.rinconsur.repository.model.UsuarioConTipo
-import kotlinx.coroutines.Dispatchers
+import com.example.rinconsur.repository.remote.ApiException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class UsuarioFormState(
     val id: Long = 0,
@@ -30,38 +28,55 @@ data class UsuarioFormState(
     val claveError: String? = null
 )
 
-class UsuarioViewModel(application: Application) : AndroidViewModel(application) {
+@OptIn(ExperimentalCoroutinesApi::class)
+class UsuarioViewModel(
+    private val repo: UsuarioRepository = UsuarioRepository()
+) : ViewModel() {
 
-    private val usuarioDao = AppDatabase.getDatabase(application).usuarioDao()
+    // Mensajes generales (errores de red, desactivar cuenta, etc.)
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
 
-    // READ
-    val usuarios: StateFlow<List<UsuarioConTipo>> = usuarioDao.listar()
+    fun clearMessage() { _message.value = null }
+
+    // Cada vez que cambia este número, se vuelve a pedir la lista al backend
+    private val recarga = MutableStateFlow(0)
+
+    // READ: GET /api/usuarios. Se carga al abrir la pantalla y tras cada cambio.
+    val usuarios: StateFlow<List<UsuarioConTipo>> = recarga
+        .mapLatest {
+            repo.listar().getOrElse { e ->
+                _message.value = e.message
+                emptyList()
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun recargar() = recarga.update { it + 1 }
 
     // Estado del formulario, con un error por campo
     private val _form = MutableStateFlow(UsuarioFormState())
     val form: StateFlow<UsuarioFormState> = _form.asStateFlow()
 
-    // Mensajes generales (por ejemplo, al desactivar una cuenta)
-    private val _message = MutableStateFlow<String?>(null)
-    val message: StateFlow<String?> = _message.asStateFlow()
-
-    fun clearMessage() { _message.value = null }
+    // true mientras se guarda (evita guardar dos veces con doble toque)
+    private val _guardando = MutableStateFlow(false)
+    val guardando: StateFlow<Boolean> = _guardando.asStateFlow()
 
     fun nuevo() { _form.value = UsuarioFormState() }
 
     // Carga un usuario para editarlo. La clave queda vacía: si no se escribe, se conserva la anterior.
     fun cargar(id: Long) {
         viewModelScope.launch {
-            val u = withContext(Dispatchers.IO) { usuarioDao.buscarPorId(id) }
-            if (u != null) {
-                _form.value = UsuarioFormState(
-                    id = u.id,
-                    nombre = u.nombre,
-                    email = u.email,
-                    tipoUsuarioId = u.tipoUsuarioId
-                )
-            }
+            repo.buscar(id)
+                .onSuccess { u ->
+                    _form.value = UsuarioFormState(
+                        id = u.id,
+                        nombre = u.nombre,
+                        email = u.email,
+                        tipoUsuarioId = u.tipoUsuarioId
+                    )
+                }
+                .onFailure { _message.value = it.message }
         }
     }
 
@@ -94,43 +109,23 @@ class UsuarioViewModel(application: Application) : AndroidViewModel(application)
             }
             return
         }
+        if (_guardando.value) return
 
         viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    if (f.id == 0L) {
-                        val sal = Seguridad.nuevaSal()
-                        usuarioDao.insertar(
-                            Usuario(
-                                nombre = nombre,
-                                email = email,
-                                claveHash = Seguridad.hash(f.clave, sal),
-                                sal = sal,
-                                tipoUsuarioId = f.tipoUsuarioId
-                            )
-                        )
-                    } else {
-                        val actual = usuarioDao.buscarPorId(f.id)
-                        if (actual != null) {
-                            val base = actual.copy(
-                                nombre = nombre,
-                                email = email,
-                                tipoUsuarioId = f.tipoUsuarioId
-                            )
-                            val actualizado = if (f.clave.isEmpty()) {
-                                base
-                            } else {
-                                val sal = Seguridad.nuevaSal()
-                                base.copy(claveHash = Seguridad.hash(f.clave, sal), sal = sal)
-                            }
-                            usuarioDao.actualizar(actualizado)
-                        }
-                    }
-                }
-                onSuccess()
-            } catch (e: SQLiteConstraintException) {
-                _form.update { it.copy(emailError = "Ya existe un usuario con ese email") }
+            _guardando.value = true
+            val resultado = if (f.id == 0L) {
+                repo.crear(nombre, email, f.clave, f.tipoUsuarioId)
+            } else {
+                repo.actualizar(f.id, nombre, email, f.clave.ifEmpty { null }, f.tipoUsuarioId)
             }
+            _guardando.value = false
+
+            resultado
+                .onSuccess {
+                    recargar()
+                    onSuccess()
+                }
+                .onFailure { mostrarError(it) }
         }
     }
 
@@ -140,8 +135,31 @@ class UsuarioViewModel(application: Application) : AndroidViewModel(application)
             _message.value = "No puedes desactivar tu propia cuenta"
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            usuarioDao.cambiarActivo(usuario.id, activo)
+        viewModelScope.launch {
+            repo.cambiarActivo(usuario.id, activo)
+                .onSuccess { recargar() }
+                .onFailure { _message.value = it.message }
+        }
+    }
+
+    // Lleva cada error del backend al campo que corresponde
+    private fun mostrarError(e: Throwable) {
+        val api = e as? ApiException
+        when {
+            // 409: el email ya está registrado
+            api?.codigo == 409 ->
+                _form.update { it.copy(emailError = e.message) }
+
+            // 400 con errores por campo (validaciones del backend)
+            api != null && api.errores.isNotEmpty() ->
+                _form.update {
+                    it.copy(
+                        nombreError = api.errores["nombre"],
+                        emailError = api.errores["email"]
+                    )
+                }
+
+            else -> _message.value = e.message ?: "No se pudo guardar"
         }
     }
 }

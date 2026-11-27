@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -29,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.rinconsur.repository.model.Entrada
 import com.example.rinconsur.repository.model.Turno
 import com.example.rinconsur.view.utils.FotoMiniatura
 import com.example.rinconsur.view.utils.MensajeError
@@ -37,6 +39,7 @@ import com.example.rinconsur.view.utils.vibrarConfirmacion
 import com.example.rinconsur.view.utils.vibrarError
 import com.example.rinconsur.viewmodels.TurnoFormState
 import com.example.rinconsur.viewmodels.TurnoViewModel
+import com.example.rinconsur.viewmodels.Validaciones
 import java.io.File
 
 @Composable
@@ -44,9 +47,23 @@ fun TurnoScreen(viewModel: TurnoViewModel) {
     val context = LocalContext.current
     val form by viewModel.form.collectAsStateWithLifecycle()
     val turnoActivo by viewModel.turnoActivo.collectAsStateWithLifecycle()
+    val entradas by viewModel.entradas.collectAsStateWithLifecycle()
+    val cargando by viewModel.cargando.collectAsStateWithLifecycle()
+    val mensaje by viewModel.message.collectAsStateWithLifecycle()
 
     var camaraAbierta by rememberSaveable { mutableStateOf(false) }
     var permisoDenegado by rememberSaveable { mutableStateOf(false) }
+
+    // Al abrir la pantalla se actualizan las entradas desde ms-entradas
+    LaunchedEffect(Unit) { viewModel.cargarEntradas() }
+
+    // Errores del backend o de la red
+    LaunchedEffect(mensaje) {
+        mensaje?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.clearMessage()
+        }
+    }
 
     // Solicitud del permiso de cámara en tiempo de ejecución
     val permisoLauncher = rememberLauncherForActivityResult(
@@ -87,10 +104,12 @@ fun TurnoScreen(viewModel: TurnoViewModel) {
     } else {
         Crossfade(targetState = turnoActivo, label = "turno") { turno ->
             if (turno != null) {
-                TurnoEnCurso(turno = turno, viewModel = viewModel)
+                TurnoEnCurso(turno = turno, viewModel = viewModel, cargando = cargando)
             } else {
                 FormularioInicio(
                     form = form,
+                    entradas = entradas,
+                    cargando = cargando,
                     viewModel = viewModel,
                     permisoDenegado = permisoDenegado,
                     onTomarFoto = { tomarFoto() },
@@ -110,6 +129,8 @@ fun TurnoScreen(viewModel: TurnoViewModel) {
 @Composable
 private fun FormularioInicio(
     form: TurnoFormState,
+    entradas: List<Entrada>,
+    cargando: Boolean,
     viewModel: TurnoViewModel,
     permisoDenegado: Boolean,
     onTomarFoto: () -> Unit,
@@ -127,21 +148,33 @@ private fun FormularioInicio(
     ) {
         Text("Iniciar turno", style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = "Elige el acceso donde te ubicarás y toma una foto de la puerta.",
+            text = "Elige la entrada donde te ubicarás y toma una foto de la puerta.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // Acceso
+        // Entrada (cargadas desde ms-entradas)
         Spacer(Modifier.height(4.dp))
-        Text("Acceso", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChipAcceso(1, form.accesoId == 1, { viewModel.onAccesoChange(1) }, Modifier.weight(1f))
-            ChipAcceso(2, form.accesoId == 2, { viewModel.onAccesoChange(2) }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChipAcceso(3, form.accesoId == 3, { viewModel.onAccesoChange(3) }, Modifier.weight(1f))
-            ChipAcceso(4, form.accesoId == 4, { viewModel.onAccesoChange(4) }, Modifier.weight(1f))
+        Text("Entrada", style = MaterialTheme.typography.titleMedium)
+        if (entradas.isEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Cargando entradas…", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { viewModel.cargarEntradas() }) { Text("Reintentar") }
+            }
+        } else {
+            // Un chip por fila: los nombres son largos y no caben dos por fila
+            entradas.forEach { entrada ->
+                val id = entrada.id.toInt()
+                ChipAcceso(
+                    nombre = entrada.nombre,
+                    seleccionado = form.accesoId == id,
+                    onClick = { viewModel.onAccesoChange(id) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
         MensajeError(form.accesoError)
 
@@ -221,11 +254,20 @@ private fun FormularioInicio(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { viewModel.iniciar { vibrarConfirmacion(context) } },
+            enabled = !cargando,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null)
+            if (cargando) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+            }
             Spacer(Modifier.width(8.dp))
             Text("Iniciar turno")
         }
@@ -234,7 +276,7 @@ private fun FormularioInicio(
 
 @Composable
 private fun ChipAcceso(
-    numero: Int,
+    nombre: String,
     seleccionado: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -242,7 +284,7 @@ private fun ChipAcceso(
     FilterChip(
         selected = seleccionado,
         onClick = onClick,
-        label = { Text("Acceso $numero", modifier = Modifier.padding(vertical = 8.dp)) },
+        label = { Text(nombre, modifier = Modifier.padding(vertical = 8.dp)) },
         leadingIcon = {
             Icon(
                 imageVector = if (seleccionado) Icons.Default.Check else Icons.Default.MeetingRoom,
@@ -255,7 +297,7 @@ private fun ChipAcceso(
 }
 
 @Composable
-private fun TurnoEnCurso(turno: Turno, viewModel: TurnoViewModel) {
+private fun TurnoEnCurso(turno: Turno, viewModel: TurnoViewModel, cargando: Boolean) {
     val context = LocalContext.current
     var confirmar by remember { mutableStateOf(false) }
 
@@ -284,7 +326,7 @@ private fun TurnoEnCurso(turno: Turno, viewModel: TurnoViewModel) {
                     Spacer(Modifier.width(8.dp))
                     Text("Turno en curso", style = MaterialTheme.typography.titleLarge)
                 }
-                Text("Acceso ${turno.accesoId}", style = MaterialTheme.typography.titleMedium)
+                Text(Validaciones.nombreAcceso(turno.accesoId), style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = "Inicio: ${formatearFechaHora(turno.inicio)}",
                     style = MaterialTheme.typography.bodyMedium
@@ -303,6 +345,7 @@ private fun TurnoEnCurso(turno: Turno, viewModel: TurnoViewModel) {
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { confirmar = true },
+            enabled = !cargando,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
             modifier = Modifier
                 .fillMaxWidth()

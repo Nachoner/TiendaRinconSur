@@ -1,6 +1,7 @@
 package com.example.rinconsur.viewmodels
 
 import com.example.rinconsur.repository.model.TipoUsuario
+import com.example.rinconsur.repository.NombresEntrada
 
 /**
  * Reglas de validación compartidas por los ViewModels.
@@ -12,6 +13,20 @@ object Validaciones {
     const val MIN_CLAVE = 6
 
     val ACCESOS = 1..4
+
+    // Nombre que se muestra para cada acceso. En la BD se guarda solo el número (1 a 4).
+    private val NOMBRES_ACCESO = mapOf(
+        1 to "Entrada 2do piso",
+        2 to "Entrada Dentro Mall",
+        3 to "Entrada Sodimac",
+        4 to "Entrada Afuera Mall"
+    )
+
+    // Primero usa el nombre que vino del backend; si no está, el de respaldo
+    fun nombreAcceso(accesoId: Int): String =
+        NombresEntrada.nombre(accesoId.toLong())
+            ?: NOMBRES_ACCESO[accesoId]
+            ?: "Acceso $accesoId"
 
     val RANGOS_ETARIOS = listOf(
         "Menor de 18", "18-25", "26-35", "36-50", "51-65", "66 o más"
@@ -58,9 +73,10 @@ object Validaciones {
         else -> null
     }
 
-    fun validarAcceso(acceso: Int?): String? = when {
-        acceso == null -> "Selecciona un acceso"
-        acceso !in ACCESOS -> "Acceso no válido"
+    // validos: ids de las entradas disponibles (por defecto, 1 a 4)
+    fun validarAcceso(acceso: Int?, validos: Collection<Int> = ACCESOS.toList()): String? = when {
+        acceso == null -> "Selecciona una entrada"
+        acceso !in validos -> "Entrada no válida"
         else -> null
     }
 

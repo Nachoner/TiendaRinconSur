@@ -24,6 +24,7 @@ import com.example.rinconsur.view.utils.formatearFechaHora
 import com.example.rinconsur.viewmodels.DashboardViewModel
 import com.example.rinconsur.viewmodels.RegistroViewModel
 import com.example.rinconsur.viewmodels.TurnoViewModel
+import com.example.rinconsur.viewmodels.Validaciones
 import kotlin.math.roundToInt
 
 @Composable
@@ -145,7 +146,7 @@ private fun PanelOperador(
 
             if (turnoActual != null) {
                 Text(
-                    text = "Acceso ${turnoActual.accesoId} · desde ${formatearFechaHora(turnoActual.inicio)}",
+                    text = "${Validaciones.nombreAcceso(turnoActual.accesoId)} · desde ${formatearFechaHora(turnoActual.inicio)}",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {

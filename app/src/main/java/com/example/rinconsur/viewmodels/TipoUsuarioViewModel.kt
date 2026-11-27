@@ -1,21 +1,20 @@
 package com.example.rinconsur.viewmodels
 
-import android.app.Application
-import android.database.sqlite.SQLiteConstraintException
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.rinconsur.repository.data.AppDatabase
+import com.example.rinconsur.repository.TipoUsuarioRepository
 import com.example.rinconsur.repository.model.TipoUsuario
 import com.example.rinconsur.repository.model.TiposBase
-import kotlinx.coroutines.Dispatchers
+import com.example.rinconsur.repository.remote.ApiException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class TipoUsuarioFormState(
     val id: Long = 0,
@@ -23,23 +22,35 @@ data class TipoUsuarioFormState(
     val nombreError: String? = null
 )
 
-class TipoUsuarioViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val dao = AppDatabase.getDatabase(application).tipoUsuarioDao()
-
-    // READ
-    val tipos: StateFlow<List<TipoUsuario>> = dao.listar()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    // Estado del formulario, con el error del campo
-    private val _form = MutableStateFlow(TipoUsuarioFormState())
-    val form: StateFlow<TipoUsuarioFormState> = _form.asStateFlow()
+@OptIn(ExperimentalCoroutinesApi::class)
+class TipoUsuarioViewModel(
+    private val repo: TipoUsuarioRepository = TipoUsuarioRepository()
+) : ViewModel() {
 
     // Mensajes generales (por ejemplo, al eliminar)
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
     fun clearMessage() { _message.value = null }
+
+    // Cada vez que cambia este número, se vuelve a pedir la lista al backend
+    private val recarga = MutableStateFlow(0)
+
+    // READ: GET /api/tipos-usuario
+    val tipos: StateFlow<List<TipoUsuario>> = recarga
+        .mapLatest {
+            repo.listar().getOrElse { e ->
+                _message.value = e.message
+                emptyList()
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun recargar() = recarga.update { it + 1 }
+
+    // Estado del formulario, con el error del campo
+    private val _form = MutableStateFlow(TipoUsuarioFormState())
+    val form: StateFlow<TipoUsuarioFormState> = _form.asStateFlow()
 
     fun nuevo() { _form.value = TipoUsuarioFormState() }
 
@@ -65,34 +76,34 @@ class TipoUsuarioViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val tipo = TipoUsuario(id = f.id, nombre = valor)
-                    if (f.id == 0L) {
-                        dao.insertar(tipo)
+            val resultado = if (f.id == 0L) repo.crear(valor) else repo.actualizar(f.id, valor)
+            resultado
+                .onSuccess {
+                    recargar()
+                    onSuccess()
+                }
+                .onFailure { e ->
+                    val api = e as? ApiException
+                    if (api?.codigo != null) {
+                        // 409 (ya existe) o 400 (validación): se muestra bajo el campo
+                        _form.update { it.copy(nombreError = api.errores["nombre"] ?: e.message) }
                     } else {
-                        dao.actualizar(tipo)
+                        _message.value = e.message
                     }
                 }
-                onSuccess()
-            } catch (e: SQLiteConstraintException) {
-                _form.update { it.copy(nombreError = "El tipo \"$valor\" ya existe") }
-            }
         }
     }
 
-    /** DELETE. Falla si algún usuario usa el tipo (FK RESTRICT). */
+    /** DELETE. El backend lo rechaza si algún usuario usa el tipo. */
     fun delete(tipo: TipoUsuario) {
         if (TiposBase.esBase(tipo.id)) {
             _message.value = "Los tipos base (Operador y Supervisor) no se pueden eliminar"
             return
         }
         viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) { dao.eliminar(tipo) }
-            } catch (e: SQLiteConstraintException) {
-                _message.value = "No se puede eliminar \"${tipo.nombre}\": hay usuarios con ese tipo"
-            }
+            repo.eliminar(tipo.id)
+                .onSuccess { recargar() }
+                .onFailure { _message.value = it.message }
         }
     }
 }
