@@ -1,23 +1,16 @@
 package com.example.rinconsur.viewmodels
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.rinconsur.repository.data.AppDatabase
+import com.example.rinconsur.repository.RegistroRepository
 import com.example.rinconsur.repository.model.Registro
 import com.example.rinconsur.repository.model.Turno
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.example.rinconsur.repository.remote.ApiException
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class RegistroFormState(
     val id: Long = 0,
@@ -31,47 +24,66 @@ data class RegistroFormState(
     val comproError: String? = null
 )
 
-class RegistroViewModel(application: Application) : AndroidViewModel(application) {
+class RegistroViewModel(
+    private val repo: RegistroRepository = RegistroRepository()
+) : ViewModel() {
 
-    private val dao = AppDatabase.getDatabase(application).registroDao()
+    // Turno activo del operador (lo informa AppNavigation)
+    private var turnoId: Long? = null
 
-    // Turno activo del operador (lo informa la pantalla)
-    private val turnoId = MutableStateFlow<Long?>(null)
-
-    // READ: registros del turno activo
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val registros: StateFlow<List<Registro>> = turnoId
-        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else dao.registrosDelTurno(id) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // READ: registros del turno activo (vienen de ms-registros)
+    private val _registros = MutableStateFlow<List<Registro>>(emptyList())
+    val registros: StateFlow<List<Registro>> = _registros.asStateFlow()
 
     private val _form = MutableStateFlow(RegistroFormState())
     val form: StateFlow<RegistroFormState> = _form.asStateFlow()
 
-    // Mensajes generales (por ejemplo, un permiso denegado)
+    // true mientras se guarda (evita guardar dos veces con doble toque)
+    private val _guardando = MutableStateFlow(false)
+    val guardando: StateFlow<Boolean> = _guardando.asStateFlow()
+
+    // Mensajes generales (errores de red, permisos, etc.)
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
     fun clearMessage() { _message.value = null }
 
-    fun setTurno(id: Long?) { turnoId.value = id }
+    fun setTurno(id: Long?) {
+        turnoId = id
+        _registros.value = emptyList()
+        if (id != null) recargar()
+    }
+
+    // GET /api/registros?turnoId=...
+    fun recargar() {
+        val id = turnoId ?: return
+        viewModelScope.launch {
+            repo.delTurno(id)
+                .onSuccess { _registros.value = it }
+                .onFailure { _message.value = it.message }
+        }
+    }
 
     fun nuevo() { _form.value = RegistroFormState() }
 
     // Carga un registro para editarlo, solo si pertenece al turno activo
     fun cargar(id: Long) {
         viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { dao.buscarPorId(id) }
-            if (r == null || r.turnoId != turnoId.value) {
-                _message.value = "Solo puedes editar registros de tu turno activo"
-                return@launch
-            }
-            _form.value = RegistroFormState(
-                id = r.id,
-                rangoEtario = r.rangoEtario,
-                adultos = r.acompanantesAdultos.toString(),
-                ninos = r.acompanantesNinos.toString(),
-                compro = r.compro
-            )
+            repo.buscar(id)
+                .onSuccess { r ->
+                    if (r.turnoId != turnoId) {
+                        _message.value = "Solo puedes editar registros de tu turno activo"
+                        return@onSuccess
+                    }
+                    _form.value = RegistroFormState(
+                        id = r.id,
+                        rangoEtario = r.rangoEtario,
+                        adultos = r.acompanantesAdultos.toString(),
+                        ninos = r.acompanantesNinos.toString(),
+                        compro = r.compro
+                    )
+                }
+                .onFailure { _message.value = it.message }
         }
     }
 
@@ -84,11 +96,10 @@ class RegistroViewModel(application: Application) : AndroidViewModel(application
     fun onNinosChange(value: String) =
         _form.update { it.copy(ninos = Validaciones.soloDigitos(value), ninosError = null) }
 
-
     fun onComproChange(value: Boolean) =
         _form.update { it.copy(compro = value, comproError = null) }
 
-    /** CREATE (id = 0) o UPDATE (id > 0). El turno entrega el acceso. */
+    /** CREATE (id = 0) o UPDATE (id > 0). El backend toma la entrada desde el turno. */
     fun guardar(turno: Turno, onSuccess: () -> Unit) {
         val f = _form.value
 
@@ -108,52 +119,57 @@ class RegistroViewModel(application: Application) : AndroidViewModel(application
             }
             return
         }
+        if (_guardando.value) return
 
         val adultos = f.adultos.trim().toInt()
         val ninos = f.ninos.trim().toInt()
 
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                if (f.id == 0L) {
-                    dao.insertar(
-                        Registro(
-                            turnoId = turno.id,
-                            accesoId = turno.accesoId,
-                            fechaHora = System.currentTimeMillis(),
-                            rangoEtario = f.rangoEtario!!,
-                            acompanantesAdultos = adultos,
-                            acompanantesNinos = ninos,
-                            compro = f.compro!!
-                        )
-                    )
-                } else {
-                    val actual = dao.buscarPorId(f.id)
-                    // Se conservan el turno, el acceso y la fecha del registro original
-                    if (actual != null && actual.turnoId == turno.id) {
-                        dao.actualizar(
-                            actual.copy(
-                                rangoEtario = f.rangoEtario!!,
-                                acompanantesAdultos = adultos,
-                                acompanantesNinos = ninos,
-                                compro = f.compro!!
-                            )
-                        )
-                    }
-                }
+            _guardando.value = true
+            val resultado = if (f.id == 0L) {
+                repo.crear(turno.id, f.rangoEtario!!, adultos, ninos, f.compro!!)
+            } else {
+                repo.actualizar(f.id, turno.id, f.rangoEtario!!, adultos, ninos, f.compro!!)
             }
-            _form.value = RegistroFormState()
-            onSuccess()
+            _guardando.value = false
+
+            resultado
+                .onSuccess {
+                    _form.value = RegistroFormState()
+                    recargar()
+                    onSuccess()
+                }
+                .onFailure { mostrarError(it) }
         }
     }
 
     /** DELETE: solo registros del turno activo. */
     fun eliminar(registro: Registro) {
-        if (registro.turnoId != turnoId.value) {
+        if (registro.turnoId != turnoId) {
             _message.value = "Solo puedes eliminar registros de tu turno activo"
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            dao.eliminar(registro)
+        viewModelScope.launch {
+            repo.eliminar(registro.id)
+                .onSuccess { _registros.update { lista -> lista.filterNot { it.id == registro.id } } }
+                .onFailure { _message.value = it.message }
+        }
+    }
+
+    // Si el backend devolvió errores por campo, se muestran bajo cada campo
+    private fun mostrarError(e: Throwable) {
+        val errores = (e as? ApiException)?.errores.orEmpty()
+        if (errores.isEmpty()) {
+            _message.value = e.message ?: "No se pudo guardar"
+            return
+        }
+        _form.update {
+            it.copy(
+                rangoError = errores["rangoEtario"],
+                adultosError = errores["acompanantesAdultos"],
+                ninosError = errores["acompanantesNinos"],
+                comproError = errores["compro"]
+            )
         }
     }
 }

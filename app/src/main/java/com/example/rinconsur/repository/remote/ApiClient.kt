@@ -1,5 +1,8 @@
 package com.example.rinconsur.repository.remote
 
+import com.example.rinconsur.repository.remote.api.EntradasApi
+import com.example.rinconsur.repository.remote.api.RegistrosApi
+import com.example.rinconsur.repository.remote.api.TurnosApi
 import com.example.rinconsur.repository.remote.api.UsuariosApi
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -32,5 +35,17 @@ object ApiClient {
 
     val usuariosApi: UsuariosApi by lazy {
         crear(ApiConfig.USUARIOS_URL).create(UsuariosApi::class.java)
+    }
+
+    val entradasApi: EntradasApi by lazy {
+        crear(ApiConfig.ENTRADAS_URL).create(EntradasApi::class.java)
+    }
+
+    val turnosApi: TurnosApi by lazy {
+        crear(ApiConfig.TURNOS_URL).create(TurnosApi::class.java)
+    }
+
+    val registrosApi: RegistrosApi by lazy {
+        crear(ApiConfig.REGISTROS_URL).create(RegistrosApi::class.java)
     }
 }
