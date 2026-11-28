@@ -1,19 +1,11 @@
 package com.example.rinconsur.repository.model
 
-import androidx.room.Entity
-import androidx.room.Index
-import androidx.room.PrimaryKey
-
 /**
- * Tipo de usuario: Operador, Supervisor, etc.
+ * Tipo de usuario: Operador, Supervisor, etc. (viene de ms-usuarios)
  * nombre: máximo 30 caracteres y solo letras (se valida en Validaciones).
  */
-@Entity(
-    tableName = "tipos_usuario",
-    indices = [Index(value = ["nombre"], unique = true)]
-)
 data class TipoUsuario(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val nombre: String
 ) {
     companion object {
@@ -21,7 +13,7 @@ data class TipoUsuario(
     }
 }
 
-// Tipos base que crea la base de datos al abrirse. La lógica de la app depende
+// Tipos base que crea el backend al arrancar. La lógica de la app depende
 // de sus ids y no de sus nombres, por eso no se pueden editar ni eliminar.
 object TiposBase {
     const val OPERADOR_ID = 1L

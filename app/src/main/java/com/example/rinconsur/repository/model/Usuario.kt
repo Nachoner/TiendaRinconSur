@@ -1,33 +1,14 @@
 package com.example.rinconsur.repository.model
 
-import androidx.room.Entity
-import androidx.room.ForeignKey
-import androidx.room.Index
-import androidx.room.PrimaryKey
-
-@Entity(
-    tableName = "usuarios",
-    foreignKeys = [
-        ForeignKey(
-            entity = TipoUsuario::class,
-            parentColumns = ["id"],
-            childColumns = ["tipoUsuarioId"],
-            onDelete = ForeignKey.RESTRICT, // no se puede borrar un tipo en uso
-            onUpdate = ForeignKey.CASCADE
-        )
-    ],
-    indices = [
-        Index(value = ["email"], unique = true),
-        Index("tipoUsuarioId")
-    ]
-)
+/**
+ * Usuario de la app (viene de ms-usuarios).
+ * La clave no está aquí: el backend la guarda con hash y la valida en el login.
+ */
 data class Usuario(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val nombre: String,         // nombre para mostrar, ej. "Ana Pérez"
     val email: String,          // se usa para el login (único)
-    val claveHash: String,      // la clave nunca se guarda en texto plano
-    val sal: String,            // valor aleatorio usado para generar el hash
-    val tipoUsuarioId: Long,    // FK -> tipos_usuario.id
+    val tipoUsuarioId: Long,    // id del tipo de usuario
     val activo: Boolean = true  // false = cuenta desactivada, no puede iniciar sesión
 )
 
